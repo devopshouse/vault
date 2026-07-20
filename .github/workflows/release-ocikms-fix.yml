@@ -1,0 +1,85 @@
+name: Release OCI KMS fix package
+
+on:
+  push:
+    tags:
+      - 'v2.0.3+devopshouse.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Debian/Vault version to release (for example 2.0.3+devopshouse.1)
+        required: true
+        default: 2.0.3+devopshouse.1
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build and release ARM64 Debian package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: .go-version
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set release version
+        run: |
+          version='${{ inputs.version }}'
+          if [[ -z "${version}" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VAULT_DEB_VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Prepare the embedded Vault UI
+        run: |
+          corepack enable
+          make static-dist
+
+      - name: Download and test patched OCI KMS wrapper
+        run: |
+          go mod download github.com/hashicorp/go-kms-wrapping/wrappers/ocikms/v2
+          go test github.com/hashicorp/go-kms-wrapping/wrappers/ocikms/v2
+          go test ./internalshared/configutil
+
+      - name: Build Debian package
+        run: |
+          VAULT_DEB_ARCH=arm64 VAULT_DEB_OUT_DIR=dist ./scripts/build-deb.sh
+          sha256sum dist/*.deb > "dist/vault_${VAULT_DEB_VERSION}_SHA256SUMS"
+          (cd dist && sha256sum -c "vault_${VAULT_DEB_VERSION}_SHA256SUMS")
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: vault_${{ env.VAULT_DEB_VERSION }}_arm64.sbom.spdx.json
+          output-file: dist/vault_${{ env.VAULT_DEB_VERSION }}_arm64.sbom.spdx.json
+          path: dist/vault_${{ env.VAULT_DEB_VERSION }}_arm64.deb
+          format: spdx-json
+
+      - name: Attest the release package
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/vault_${{ env.VAULT_DEB_VERSION }}_arm64.deb
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VAULT_DEB_VERSION }}
+          generate_release_notes: true
+          body: |
+            ARM64 Debian package containing the OCI KMS nil-response retry guard.
+            Verify `vault_${{ env.VAULT_DEB_VERSION }}_SHA256SUMS` before installation. The `.deb` also has a GitHub build-provenance attestation.
+          files: |
+            dist/vault_${{ env.VAULT_DEB_VERSION }}_arm64.deb
+            dist/vault_${{ env.VAULT_DEB_VERSION }}_SHA256SUMS
+            dist/vault_${{ env.VAULT_DEB_VERSION }}_arm64.sbom.spdx.json

@@ -247,6 +247,11 @@ require (
 	layeh.com/radius v0.0.0-20231213012653-1006025d24f8
 )
 
+// OCI SDK authentication and transport failures can return an operation result
+// with no response. Use the tested devopshouse patch until upstream PR #326 is
+// released by hashicorp/go-kms-wrapping.
+replace github.com/hashicorp/go-kms-wrapping/wrappers/ocikms/v2 => github.com/devopshouse/go-kms-wrapping/wrappers/ocikms/v2 v2.0.9-devopshouse.1
+
 require github.com/aws/aws-sdk-go-v2/service/iam v1.53.6
 
 require (

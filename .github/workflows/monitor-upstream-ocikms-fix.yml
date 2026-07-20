@@ -1,0 +1,99 @@
+name: Monitorar correção upstream do OCI KMS
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verificar merge e tag estável upstream
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const upstream = { owner: 'hashicorp', repo: 'go-kms-wrapping' };
+            const pullNumber = 326;
+            const markerLabel = 'upstream-ocikms-monitor';
+
+            const { data: pr } = await github.rest.pulls.get({ ...upstream, pull_number: pullNumber });
+            if (!pr.merged_at) {
+              core.info(`A PR #${pullNumber} ainda não foi mesclada.`);
+              return;
+            }
+
+            const tags = await github.paginate(github.rest.repos.listTags, {
+              ...upstream,
+              per_page: 100,
+            });
+            const stableTags = tags.filter((tag) =>
+              /^wrappers\/ocikms\/v2\.\d+\.\d+$/.test(tag.name)
+            );
+
+            let publishedTag;
+            for (const tag of stableTags) {
+              const { data: comparison } = await github.rest.repos.compareCommits({
+                ...upstream,
+                base: pr.merge_commit_sha,
+                head: tag.commit.sha,
+              });
+              if (comparison.status === 'ahead' || comparison.status === 'identical') {
+                publishedTag = tag.name;
+                break;
+              }
+            }
+
+            if (!publishedTag) {
+              core.info('A PR foi mesclada, mas ainda não existe uma tag estável do ocikms que contenha a correção.');
+              return;
+            }
+
+            const { data: existingIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: markerLabel,
+              per_page: 100,
+            });
+            if (existingIssues.length > 0) {
+              core.info(`A notificação já foi criada na issue #${existingIssues[0].number}.`);
+              return;
+            }
+
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: markerLabel,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: markerLabel,
+                color: '0E8A16',
+                description: 'Notificações automáticas sobre a correção upstream do OCI KMS',
+              });
+            }
+
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Correção upstream do OCI KMS disponível',
+              labels: [markerLabel],
+              body: [
+                'Olá! A correção que evita o panic de resposta nula no OCI KMS já está disponível upstream.',
+                '',
+                `- PR: ${pr.html_url}`,
+                `- Tag estável: \`${publishedTag}\``,
+                '',
+                'Podemos agora remover o override temporário `devopshouse/go-kms-wrapping`, atualizar a dependência do Vault para a tag upstream e executar novamente a suíte de testes e o rollout controlado.',
+              ].join('\n'),
+            });
+            core.notice(`Notificação em português criada: ${issue.html_url}`);
