@@ -606,4 +606,4 @@ require (
 // OCI SDK authentication and transport failures can return an operation result
 // with no response. Use the tested devopshouse patch until upstream PR #355 is
 // released by hashicorp/go-kms-wrapping.
-replace github.com/hashicorp/go-kms-wrapping/wrappers/ocikms/v2 => github.com/devopshouse/go-kms-wrapping/wrappers/ocikms/v2 v2.0.11-devopshouse.1
+replace github.com/hashicorp/go-kms-wrapping/wrappers/ocikms/v2 => github.com/devopshouse/go-kms-wrapping/wrappers/ocikms/v2 v2.0.11-devopshouse.2
